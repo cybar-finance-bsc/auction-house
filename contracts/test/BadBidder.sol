@@ -8,11 +8,9 @@ import {IAuctionHouse} from "../interfaces/IAuctionHouse.sol";
 // and thus should cause a revert when an auction is finalized with this as the winning bidder.
 contract BadBidder {
     address auction;
-    address zora;
 
-    constructor(address _auction, address _zora) public {
+    constructor(address _auction) public {
         auction = _auction;
-        zora = _zora;
     }
 
     function placeBid(uint256 auctionId, uint256 amount) external payable {
