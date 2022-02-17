@@ -6,14 +6,13 @@ pragma experimental ABIEncoderV2;
 import { SafeMath } from "@openzeppelin/contracts/math/SafeMath.sol";
 import { IERC721, IERC165 } from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import { ReentrancyGuard } from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
-import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import { SafeERC20 } from "@openzeppelin/contracts/token/ERC20/SafeERC20.sol";
-import {Counters} from "@openzeppelin/contracts/utils/Counters.sol";
-import { IMarket, Decimal } from "@zoralabs/core/dist/contracts/interfaces/IMarket.sol";
-import { IMedia } from "@zoralabs/core/dist/contracts/interfaces/IMedia.sol";
+import { Counters } from "@openzeppelin/contracts/utils/Counters.sol";
 import { IAuctionHouse } from "./interfaces/IAuctionHouse.sol";
+import { Decimal } from "./libraries/Decimal.sol";
 
-interface IWETH {
+interface IWFTM {
     function deposit() external payable;
     function withdraw(uint wad) external;
 
@@ -38,11 +37,8 @@ contract AuctionHouse is IAuctionHouse, ReentrancyGuard {
     // The minimum percentage difference between the last bid amount and the current bid.
     uint8 public minBidIncrementPercentage;
 
-    // The address of the zora protocol to use via this contract
-    address public zora;
-
-    // / The address of the WETH contract, so that any ETH transferred can be handled as an ERC-20
-    address public wethAddress;
+    // / The address of the WFTM contract, so that any FTM transferred can be handled as an ERC-20
+    address public wftmAddress;
 
     // A mapping of all of the auctions currently running.
     mapping(uint256 => IAuctionHouse.Auction) public auctions;
@@ -62,13 +58,8 @@ contract AuctionHouse is IAuctionHouse, ReentrancyGuard {
     /*
      * Constructor
      */
-    constructor(address _zora, address _weth) public {
-        require(
-            IERC165(_zora).supportsInterface(interfaceId),
-            "Doesn't support NFT interface"
-        );
-        zora = _zora;
-        wethAddress = _weth;
+    constructor(address _wftm) public {
+        wftmAddress = _wftm;
         timeBuffer = 15 * 60; // extend 15 minutes after every bid made in last 15 minutes
         minBidIncrementPercentage = 5; // 5%
     }
@@ -147,7 +138,7 @@ contract AuctionHouse is IAuctionHouse, ReentrancyGuard {
     /**
      * @notice Create a bid on a token, with a given amount.
      * @dev If provided a valid bid, transfers the provided amount to this contract.
-     * If the auction is run in native ETH, the ETH is wrapped so it can be identically to other
+     * If the auction is run in native FTM, the FTM is wrapped so it can be identically to other
      * auction currencies in this contract.
      */
     function createBid(uint256 auctionId, uint256 amount)
@@ -175,17 +166,6 @@ contract AuctionHouse is IAuctionHouse, ReentrancyGuard {
             ),
             "Must send more than last bid by minBidIncrementPercentage amount"
         );
-
-        // For Zora Protocol, ensure that the bid is valid for the current bidShare configuration
-        if(auctions[auctionId].tokenContract == zora) {
-            require(
-                IMarket(IMediaExtended(zora).marketContract()).isValidBid(
-                    auctions[auctionId].tokenId,
-                    amount
-                ),
-                "Bid invalid for share splitting"
-            );
-        }
 
         // If this is the first valid bid, we should set the starting time now.
         // If it's not, then we should refund the last bidder
@@ -242,7 +222,7 @@ contract AuctionHouse is IAuctionHouse, ReentrancyGuard {
     }
 
     /**
-     * @notice End an auction, finalizing the bid on Zora if applicable and paying out the respective parties.
+     * @notice End an auction 
      * @dev If for some reason the auction cannot be finalized (invalid token recipient, for example),
      * The auction is reset and the NFT is transferred back to the auction creator.
      */
@@ -257,27 +237,16 @@ contract AuctionHouse is IAuctionHouse, ReentrancyGuard {
             "Auction hasn't completed"
         );
 
-        address currency = auctions[auctionId].auctionCurrency == address(0) ? wethAddress : auctions[auctionId].auctionCurrency;
+        address currency = auctions[auctionId].auctionCurrency == address(0) ? wftmAddress : auctions[auctionId].auctionCurrency;
         uint256 curatorFee = 0;
 
         uint256 tokenOwnerProfit = auctions[auctionId].amount;
 
-        if(auctions[auctionId].tokenContract == zora) {
-            // If the auction is running on zora, settle it on the protocol
-            (bool success, uint256 remainingProfit) = _handleZoraAuctionSettlement(auctionId);
-            tokenOwnerProfit = remainingProfit;
-            if(success != true) {
-                _handleOutgoingBid(auctions[auctionId].bidder, auctions[auctionId].amount, auctions[auctionId].auctionCurrency);
-                _cancelAuction(auctionId);
-                return;
-            }
-        } else {
-            // Otherwise, transfer the token to the winner and pay out the participants below
-            try IERC721(auctions[auctionId].tokenContract).safeTransferFrom(address(this), auctions[auctionId].bidder, auctions[auctionId].tokenId) {} catch {
-                _handleOutgoingBid(auctions[auctionId].bidder, auctions[auctionId].amount, auctions[auctionId].auctionCurrency);
-                _cancelAuction(auctionId);
-                return;
-            }
+        
+        try IERC721(auctions[auctionId].tokenContract).safeTransferFrom(address(this), auctions[auctionId].bidder, auctions[auctionId].tokenId) {} catch {
+            _handleOutgoingBid(auctions[auctionId].bidder, auctions[auctionId].amount, auctions[auctionId].auctionCurrency);
+            _cancelAuction(auctionId);
+            return;
         }
 
 
@@ -320,13 +289,13 @@ contract AuctionHouse is IAuctionHouse, ReentrancyGuard {
 
     /**
      * @dev Given an amount and a currency, transfer the currency to this contract.
-     * If the currency is ETH (0x0), attempt to wrap the amount as WETH
+     * If the currency is FTM (0x0), attempt to wrap the amount as WFTM
      */
     function _handleIncomingBid(uint256 amount, address currency) internal {
-        // If this is an ETH bid, ensure they sent enough and convert it to WETH under the hood
+        // If this is an FTM bid, ensure they sent enough and convert it to WFTM under the hood
         if(currency == address(0)) {
-            require(msg.value == amount, "Sent ETH Value does not match specified bid amount");
-            IWETH(wethAddress).deposit{value: amount}();
+            require(msg.value == amount, "Sent FTM Value does not match specified bid amount");
+            IWFTM(wftmAddress).deposit{value: amount}();
         } else {
             // We must check the balance that was actually transferred to the auction,
             // as some tokens impose a transfer fee and would not actually transfer the
@@ -340,21 +309,21 @@ contract AuctionHouse is IAuctionHouse, ReentrancyGuard {
     }
 
     function _handleOutgoingBid(address to, uint256 amount, address currency) internal {
-        // If the auction is in ETH, unwrap it from its underlying WETH and try to send it to the recipient.
+        // If the auction is in FTM, unwrap it from its underlying WFTM and try to send it to the recipient.
         if(currency == address(0)) {
-            IWETH(wethAddress).withdraw(amount);
+            IWFTM(wftmAddress).withdraw(amount);
 
-            // If the ETH transfer fails (sigh), rewrap the ETH and try send it as WETH.
-            if(!_safeTransferETH(to, amount)) {
-                IWETH(wethAddress).deposit{value: amount}();
-                IERC20(wethAddress).safeTransfer(to, amount);
+            // If the FTM transfer fails (sigh), rewrap the FTM and try send it as WFTM.
+            if(!_safeTransferFTM(to, amount)) {
+                IWFTM(wftmAddress).deposit{value: amount}();
+                IERC20(wftmAddress).safeTransfer(to, amount);
             }
         } else {
             IERC20(currency).safeTransfer(to, amount);
         }
     }
 
-    function _safeTransferETH(address to, uint256 value) internal returns (bool) {
+    function _safeTransferFTM(address to, uint256 value) internal returns (bool) {
         (bool success, ) = to.call{value: value}(new bytes(0));
         return success;
     }
@@ -376,33 +345,7 @@ contract AuctionHouse is IAuctionHouse, ReentrancyGuard {
         return auctions[auctionId].tokenOwner != address(0);
     }
 
-    function _handleZoraAuctionSettlement(uint256 auctionId) internal returns (bool, uint256) {
-        address currency = auctions[auctionId].auctionCurrency == address(0) ? wethAddress : auctions[auctionId].auctionCurrency;
-
-        IMarket.Bid memory bid = IMarket.Bid({
-            amount: auctions[auctionId].amount,
-            currency: currency,
-            bidder: address(this),
-            recipient: auctions[auctionId].bidder,
-            sellOnShare: Decimal.D256(0)
-        });
-
-        IERC20(currency).approve(IMediaExtended(zora).marketContract(), bid.amount);
-        IMedia(zora).setBid(auctions[auctionId].tokenId, bid);
-        uint256 beforeBalance = IERC20(currency).balanceOf(address(this));
-        try IMedia(zora).acceptBid(auctions[auctionId].tokenId, bid) {} catch {
-            // If the underlying NFT transfer here fails, we should cancel the auction and refund the winner
-            IMediaExtended(zora).removeBid(auctions[auctionId].tokenId);
-            return (false, 0);
-        }
-        uint256 afterBalance = IERC20(currency).balanceOf(address(this));
-
-        // We have to calculate the amount to send to the token owner here in case there was a
-        // sell-on share on the token
-        return (true, afterBalance.sub(beforeBalance));
-    }
-
-    // TODO: consider reverting if the message sender is not WETH
+    // TODO: consider reverting if the message sender is not WFTM
     receive() external payable {}
     fallback() external payable {}
 }
