@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: GPL-3.0
 
 // FOR TEST PURPOSES ONLY. NOT PRODUCTION SAFE
-// Source: https://github.com/gnosis/canonical-weth/blob/0dd1ea3e295eef916d0c6223ec63141137d22d67/contracts/WETH9.sol
+// Source: https://github.com/gnosis/canonical-weth/blob/0dd1ea3e295eef916d0c6223ec63141137d22d67/contracts/WFTM9.sol
 pragma solidity 0.6.8;
 import "hardhat/console.sol";
 
 
-contract WETH {
-    string public name     = "Wrapped Ether";
-    string public symbol   = "WETH";
+contract WFTM {
+    string public name     = "Wrapped Fantom";
+    string public symbol   = "WFTM";
     uint8  public decimals = 18;
 
     event  Approval(address indexed src, address indexed guy, uint wad);
