@@ -4,17 +4,14 @@ import chai, { expect } from "chai";
 import asPromised from "chai-as-promised";
 import {
   deployOtherNFTs,
-  deployWETH,
-  deployZoraProtocol,
-  mint,
+  deployWFTM,
   ONE_ETH,
   TENTH_ETH,
   THOUSANDTH_ETH,
   TWO_ETH,
 } from "./utils";
-import { Market, Media } from "@zoralabs/core/dist/typechain";
 import { BigNumber, Signer } from "ethers";
-import { AuctionHouse, TestERC721, WETH } from "../typechain";
+import { AuctionHouse, TestERC721, WFTM } from "../typechain";
 
 chai.use(asPromised);
 
@@ -24,9 +21,7 @@ const ONE_DAY = 24 * 60 * 60;
 const smallify = (bn: BigNumber) => bn.div(THOUSANDTH_ETH).toNumber();
 
 describe("integration", () => {
-  let market: Market;
-  let media: Media;
-  let weth: WETH;
+  let wftm: WFTM;
   let auction: AuctionHouse;
   let otherNft: TestERC721;
   let deployer, creator, owner, curator, bidderA, bidderB, otherUser: Signer;
@@ -40,7 +35,7 @@ describe("integration", () => {
 
   async function deploy(): Promise<AuctionHouse> {
     const AuctionHouse = await ethers.getContractFactory("AuctionHouse");
-    const auctionHouse = await AuctionHouse.deploy(media.address, weth.address);
+    const auctionHouse = await AuctionHouse.deploy(wftm.address);
 
     return auctionHouse as AuctionHouse;
   }
@@ -69,29 +64,24 @@ describe("integration", () => {
         s.getAddress()
       )
     );
-    const contracts = await deployZoraProtocol();
     const nfts = await deployOtherNFTs();
-    market = contracts.market;
-    media = contracts.media;
-    weth = await deployWETH();
+    wftm = await deployWFTM();
     auction = await deploy();
     otherNft = nfts.test;
-    await mint(media.connect(creator));
     await otherNft.mint(creator.address, 0);
-    await media.connect(creator).transferFrom(creatorAddress, ownerAddress, 0);
     await otherNft
       .connect(creator)
       .transferFrom(creatorAddress, ownerAddress, 0);
   });
 
-  describe("ETH Auction with no curator", async () => {
+  describe("FTM Auction with no curator", async () => {
     async function run() {
-      await media.connect(owner).approve(auction.address, 0);
+        await otherNft.connect(owner).approve(auction.address, 0);
       await auction
         .connect(owner)
         .createAuction(
           0,
-          media.address,
+          otherNft.address,
           ONE_DAY,
           TENTH_ETH,
           ethers.constants.AddressZero,
@@ -108,7 +98,7 @@ describe("integration", () => {
 
     it("should transfer the NFT to the winning bidder", async () => {
       await run();
-      expect(await media.ownerOf(0)).to.eq(bidderBAddress);
+        expect(await otherNft.ownerOf(0)).to.eq(bidderBAddress);
     });
 
     it("should withdraw the winning bid amount from the winning bidder", async () => {
@@ -138,31 +128,23 @@ describe("integration", () => {
       await run();
       const afterBalance = await ethers.provider.getBalance(ownerAddress);
 
-      // 15% creator fee -> 2ETH * 85% = 1.7 ETH
+      // 0% creator fee -> 2ETH * 100% = 2 ETH
       expect(smallify(afterBalance)).to.be.approximately(
-        smallify(beforeBalance.add(TENTH_ETH.mul(17))),
+        smallify(beforeBalance.add(TENTH_ETH.mul(20))),
         smallify(TENTH_ETH)
       );
     });
 
-    it("should pay the token creator in WETH", async () => {
-      const beforeBalance = await weth.balanceOf(creatorAddress);
-      await run();
-      const afterBalance = await weth.balanceOf(creatorAddress);
-
-      // 15% creator fee -> 2 ETH * 15% = 0.3 WETH
-      expect(afterBalance).to.eq(beforeBalance.add(THOUSANDTH_ETH.mul(300)));
-    });
   });
 
   describe("ETH auction with curator", () => {
     async function run() {
-      await media.connect(owner).approve(auction.address, 0);
+        await otherNft.connect(owner).approve(auction.address, 0);
       await auction
         .connect(owner)
         .createAuction(
           0,
-          media.address,
+            otherNft.address,
           ONE_DAY,
           TENTH_ETH,
           curatorAddress,
@@ -180,7 +162,7 @@ describe("integration", () => {
 
     it("should transfer the NFT to the winning bidder", async () => {
       await run();
-      expect(await media.ownerOf(0)).to.eq(bidderBAddress);
+      expect(await otherNft.ownerOf(0)).to.eq(bidderBAddress);
     });
 
     it("should withdraw the winning bid amount from the winning bidder", async () => {
@@ -211,19 +193,10 @@ describe("integration", () => {
       const afterBalance = await ethers.provider.getBalance(ownerAddress);
 
       expect(smallify(afterBalance)).to.be.approximately(
-        // 15% creator share + 20% curator fee  -> 1.7 ETH * 80% = 1.36 ETH
-        smallify(beforeBalance.add(TENTH_ETH.mul(14))),
+        // 20% curator fee  -> 2 ETH * 80% = 1.6 ETH
+        smallify(beforeBalance.add(TENTH_ETH.mul(16))),
         smallify(TENTH_ETH)
       );
-    });
-
-    it("should pay the token creator in WETH", async () => {
-      const beforeBalance = await weth.balanceOf(creatorAddress);
-      await run();
-      const afterBalance = await weth.balanceOf(creatorAddress);
-
-      // 15% creator fee  -> 2 ETH * 15% = 0.3 WETH
-      expect(afterBalance).to.eq(beforeBalance.add(THOUSANDTH_ETH.mul(300)));
     });
 
     it("should pay the curator", async () => {
@@ -231,9 +204,9 @@ describe("integration", () => {
       await run();
       const afterBalance = await ethers.provider.getBalance(curatorAddress);
 
-      // 20% of 1.7 WETH -> 0.34
+      // 20% of 2 WETH -> 0.4
       expect(smallify(afterBalance)).to.be.approximately(
-        smallify(beforeBalance.add(THOUSANDTH_ETH.mul(340))),
+        smallify(beforeBalance.add(THOUSANDTH_ETH.mul(400))),
         smallify(TENTH_ETH)
       );
     });
@@ -241,22 +214,22 @@ describe("integration", () => {
 
   describe("WETH Auction with no curator", () => {
     async function run() {
-      await media.connect(owner).approve(auction.address, 0);
+        otherNft.connect(owner).approve(auction.address, 0);
       await auction
         .connect(owner)
         .createAuction(
           0,
-          media.address,
+            otherNft.address,
           ONE_DAY,
           TENTH_ETH,
           ethers.constants.AddressZero,
           20,
-          weth.address
+          wftm.address
         );
-      await weth.connect(bidderA).deposit({ value: ONE_ETH });
-      await weth.connect(bidderA).approve(auction.address, ONE_ETH);
-      await weth.connect(bidderB).deposit({ value: TWO_ETH });
-      await weth.connect(bidderB).approve(auction.address, TWO_ETH);
+      await wftm.connect(bidderA).deposit({ value: ONE_ETH });
+      await wftm.connect(bidderA).approve(auction.address, ONE_ETH);
+      await wftm.connect(bidderB).deposit({ value: TWO_ETH });
+      await wftm.connect(bidderB).approve(auction.address, TWO_ETH);
       await auction.connect(bidderA).createBid(0, ONE_ETH, { value: ONE_ETH });
       await auction.connect(bidderB).createBid(0, TWO_ETH, { value: TWO_ETH });
       await ethers.provider.send("evm_setNextBlockTimestamp", [
@@ -267,60 +240,52 @@ describe("integration", () => {
 
     it("should transfer the NFT to the winning bidder", async () => {
       await run();
-      expect(await media.ownerOf(0)).to.eq(bidderBAddress);
+      expect(await otherNft.ownerOf(0)).to.eq(bidderBAddress);
     });
 
     it("should withdraw the winning bid amount from the winning bidder", async () => {
       await run();
-      const afterBalance = await weth.balanceOf(bidderBAddress);
+      const afterBalance = await wftm.balanceOf(bidderBAddress);
 
       expect(afterBalance).to.eq(ONE_ETH.mul(0));
     });
 
     it("should refund the losing bidder", async () => {
       await run();
-      const afterBalance = await weth.balanceOf(bidderAAddress);
+      const afterBalance = await wftm.balanceOf(bidderAAddress);
 
       expect(afterBalance).to.eq(ONE_ETH);
     });
 
     it("should pay the auction creator", async () => {
       await run();
-      const afterBalance = await weth.balanceOf(ownerAddress);
+      const afterBalance = await wftm.balanceOf(ownerAddress);
 
-      // 15% creator fee -> 2 ETH * 85% = 1.7WETH
-      expect(afterBalance).to.eq(TENTH_ETH.mul(17));
+      // 2 ETH
+      expect(afterBalance).to.eq(TENTH_ETH.mul(20));
     });
 
-    it("should pay the token creator", async () => {
-      const beforeBalance = await weth.balanceOf(creatorAddress);
-      await run();
-      const afterBalance = await weth.balanceOf(creatorAddress);
-
-      // 15% creator fee -> 2 ETH * 15% = 0.3 WETH
-      expect(afterBalance).to.eq(beforeBalance.add(THOUSANDTH_ETH.mul(300)));
-    });
   });
 
   describe("WETH auction with curator", async () => {
     async function run() {
-      await media.connect(owner).approve(auction.address, 0);
+      await otherNft.connect(owner).approve(auction.address, 0);
       await auction
         .connect(owner)
         .createAuction(
           0,
-          media.address,
+          otherNft.address,
           ONE_DAY,
           TENTH_ETH,
           curator.address,
           20,
-          weth.address
+          wftm.address
         );
       await auction.connect(curator).setAuctionApproval(0, true);
-      await weth.connect(bidderA).deposit({ value: ONE_ETH });
-      await weth.connect(bidderA).approve(auction.address, ONE_ETH);
-      await weth.connect(bidderB).deposit({ value: TWO_ETH });
-      await weth.connect(bidderB).approve(auction.address, TWO_ETH);
+      await wftm.connect(bidderA).deposit({ value: ONE_ETH });
+      await wftm.connect(bidderA).approve(auction.address, ONE_ETH);
+      await wftm.connect(bidderB).deposit({ value: TWO_ETH });
+      await wftm.connect(bidderB).approve(auction.address, TWO_ETH);
       await auction.connect(bidderA).createBid(0, ONE_ETH, { value: ONE_ETH });
       await auction.connect(bidderB).createBid(0, TWO_ETH, { value: TWO_ETH });
       await ethers.provider.send("evm_setNextBlockTimestamp", [
@@ -331,47 +296,38 @@ describe("integration", () => {
 
     it("should transfer the NFT to the winning bidder", async () => {
       await run();
-      expect(await media.ownerOf(0)).to.eq(bidderBAddress);
+      expect(await otherNft.ownerOf(0)).to.eq(bidderBAddress);
     });
 
     it("should withdraw the winning bid amount from the winning bidder", async () => {
       await run();
-      const afterBalance = await weth.balanceOf(bidderBAddress);
+      const afterBalance = await wftm.balanceOf(bidderBAddress);
 
       expect(afterBalance).to.eq(ONE_ETH.mul(0));
     });
 
     it("should refund the losing bidder", async () => {
       await run();
-      const afterBalance = await weth.balanceOf(bidderAAddress);
+      const afterBalance = await wftm.balanceOf(bidderAAddress);
 
       expect(afterBalance).to.eq(ONE_ETH);
     });
 
     it("should pay the auction creator", async () => {
       await run();
-      const afterBalance = await weth.balanceOf(ownerAddress);
+      const afterBalance = await wftm.balanceOf(ownerAddress);
 
-      // 15% creator fee + 20% curator fee -> 2 ETH * 85% * 80% = 1.36WETH
-      expect(afterBalance).to.eq(THOUSANDTH_ETH.mul(1360));
-    });
-
-    it("should pay the token creator", async () => {
-      const beforeBalance = await weth.balanceOf(creatorAddress);
-      await run();
-      const afterBalance = await weth.balanceOf(creatorAddress);
-
-      // 15% creator fee -> 2 ETH * 15% = 0.3 WETH
-      expect(afterBalance).to.eq(beforeBalance.add(THOUSANDTH_ETH.mul(300)));
+      // 20% curator fee -> 2 ETH * 80% = 1.6WETH
+      expect(afterBalance).to.eq(THOUSANDTH_ETH.mul(1600));
     });
 
     it("should pay the auction curator", async () => {
-      const beforeBalance = await weth.balanceOf(curatorAddress);
+      const beforeBalance = await wftm.balanceOf(curatorAddress);
       await run();
-      const afterBalance = await weth.balanceOf(curatorAddress);
+      const afterBalance = await wftm.balanceOf(curatorAddress);
 
-      // 15% creator fee + 20% curator fee = 2 ETH * 85% * 20% = 0.34 WETH
-      expect(afterBalance).to.eq(beforeBalance.add(THOUSANDTH_ETH.mul(340)));
+      // 20% curator fee = 2 ETH * 20% = 0.4 WETH
+      expect(afterBalance).to.eq(beforeBalance.add(THOUSANDTH_ETH.mul(400)));
     });
   });
 
