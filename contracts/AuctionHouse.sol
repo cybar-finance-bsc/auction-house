@@ -19,10 +19,6 @@ interface IWFTM {
     function transfer(address to, uint256 value) external returns (bool);
 }
 
-interface IMediaExtended is IMedia {
-    function marketContract() external returns(address);
-}
-
 /**
  * @title An open auction house, enabling collectors and curators to run their own auctions
  */
